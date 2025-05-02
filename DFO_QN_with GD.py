@@ -6,22 +6,22 @@ class Parameters:
     # Noise and step size parameters
     NOISE_LEVEL = 0    # objective function noise bound
     FIXED_H = 1e-8        # finite difference step size
-    
+
     # L-BFGS parameters
     MAX_MEMORY = 20        # maximum number of (s,y) pairs to store
     DAMPING_THETA = 0.1   # damping parameter for s^T y <= theta * ||s||^2
-    
+
     # Line search parameters
     C1 = 1e-4            # Armijo condition parameter
     ALPHA_INIT = 1.0     # initial step size
     TAU = 0.7            # step size reduction factor
     MIN_STEP = 1e-6      # minimum allowed step size
-    
+
     # Recovery parameters
     GAMMA1 = 0.5         # lower bound for step size ratio
     GAMMA2 = 2.0         # upper bound for step size ratio
     FECN = 4             # number of function evaluations for noise estimation
-    
+
     # Algorithm parameters
     MAX_ITER = 200       # increased max iterations for higher dimension
     TOL = 1e-6           # convergence tolerance
@@ -30,43 +30,48 @@ class Parameters:
 class ObjectiveFunction(ABC):
     def __init__(self, noise_level: float = 1e-8):
         self.noise_level = noise_level
-    
+        self.eval_count = 0
+
     @abstractmethod
     def __call__(self, x: np.ndarray) -> float:
         pass
-    
+
     @abstractmethod
     def true_value(self, x: np.ndarray) -> float:
         pass
-    
+
     def noise(self) -> float:
         return self.noise_level
 
 class Rosenbrock5D(ObjectiveFunction):
     def __call__(self, x: np.ndarray) -> float:
+        # count this evaluation
+        self.eval_count += 1
         noise = np.random.uniform(-self.noise_level, self.noise_level)
         return self.true_value(x) + noise
-    
+
     def true_value(self, x: np.ndarray) -> float:
         """5D Rosenbrock function"""
         return sum(100.0*(x[i+1] - x[i]**2)**2 + (1 - x[i])**2 for i in range(len(x)-1))
 
-class Rosenbrock3D(ObjectiveFunction):
-    def __call__(self, x: np.ndarray) -> float:
-        noise = np.random.uniform(-self.noise_level, self.noise_level)
-        return self.true_value(x) + noise
-    
-    def true_value(self, x: np.ndarray) -> float:
-        """3D Rosenbrock function"""
-        return sum(100.0*(x[i+1] - x[i]**2)**2 + (1 - x[i])**2 for i in range(len(x)-1))
-
 class Rosenbrock4D(ObjectiveFunction):
     def __call__(self, x: np.ndarray) -> float:
+        self.eval_count += 1
         noise = np.random.uniform(-self.noise_level, self.noise_level)
         return self.true_value(x) + noise
-    
+
     def true_value(self, x: np.ndarray) -> float:
         """4D Rosenbrock function"""
+        return sum(100.0*(x[i+1] - x[i]**2)**2 + (1 - x[i])**2 for i in range(len(x)-1))
+
+class Rosenbrock3D(ObjectiveFunction):
+    def __call__(self, x: np.ndarray) -> float:
+        self.eval_count += 1
+        noise = np.random.uniform(-self.noise_level, self.noise_level)
+        return self.true_value(x) + noise
+
+    def true_value(self, x: np.ndarray) -> float:
+        """3D Rosenbrock function"""
         return sum(100.0*(x[i+1] - x[i]**2)**2 + (1 - x[i])**2 for i in range(len(x)-1))
 
 
@@ -182,32 +187,25 @@ def FDLM(objective: ObjectiveFunction, x0: np.ndarray, params: Parameters = Para
         
         x_new, f_new, alpha, ls_fail = line_search(objective, x, fx, gradk, dk, eps_f, params)
         
-        #  remove if you don't want to use recovery
+        # remove if you don't want to use recovery
         if ls_fail:
             x_new, f_new, h, _ = recovery(objective, x, fx, dk, eps_f, best_x, best_f, h, params)
         
-        # s_k = x_new - x
-        # print(s_k)
-        # new
+        # compute step
         s_k = x_new - x
-        # Check if step size is too small
         if np.linalg.norm(s_k) < 1e-14:  # Near-zero step
             if params.VERBOSE:
                 print("Step size too small - Restarting L-BFGS with gradient descent")
-            # Clear L-BFGS memory
             s_list.clear()
             y_list.clear()
-            # Do one gradient descent step
             dk = -gradk
             x_new, f_new, alpha, _ = line_search(objective, x, fx, gradk, dk, eps_f, params)
-            # Update for next iteration
             s_k = x_new - x
             x, fx = x_new, f_new
             grad_new, _, _, h = estimate_gradient(objective, x, eps_f)
             gradk = grad_new
-            continue  # Skip L-BFGS update and start next iteration
+            continue
 
-        #
         x, fx = x_new, f_new
         true_val = objective.true_value(x)
         if true_val < best_true:
@@ -244,16 +242,16 @@ def FDLM(objective: ObjectiveFunction, x0: np.ndarray, params: Parameters = Para
 if __name__ == "__main__":
     np.random.seed(42)
     
-    # Initialize 5D problem
-    n_dim = 4
+    # Initialize 3D problem
+    n_dim = 3
     x0 = np.array([-1.2] + [1.0] * (n_dim-1))  # Standard initial point for Rosenbrock
     
     # Create objective function
-    rosen = Rosenbrock4D(noise_level=1e-8)
+    rosen = Rosenbrock3D(noise_level=1e-8)
     
     # Optional: customize parameters
     custom_params = Parameters()
-    custom_params.MAX_ITER = 10000  # Increased for higher dimension
+    custom_params.MAX_ITER = 300  # Increased for higher dimension
     custom_params.TOL = 1e-6
     
     sol, final_f, final_true, best_true = FDLM(rosen, x0, params=custom_params)
@@ -263,3 +261,4 @@ if __name__ == "__main__":
     print(f"Final true objective: {final_true:.6e}")
     print(f"Best true objective found: {best_true:.6e}")
     print(f"Distance to optimum: {np.linalg.norm(sol - 1.0):.6e}")
+    print(f"Number of function evaluations: {rosen.eval_count}")
